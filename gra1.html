@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Ptaszek — gra mobilna (emoji)</title>
+  <style>
+    html,body{height:100%;margin:0;background:#7ec0ff;}
+    #game{display:block;width:100%;height:100vh}
+    .overlay{position:absolute;left:0;right:0;top:8px;text-align:center;font-family:system-ui,Segoe UI,Roboto,Arial;width:100%}
+    .btn{background:rgba(255,255,255,0.9);padding:6px 10px;border-radius:10px;display:inline-block;margin:4px}
+    .bottom-info{position:absolute;left:0;right:0;bottom:12px;text-align:center;font-family:system-ui,Segoe UI,Roboto,Arial}
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="overlay">
+    <div id="score" class="btn">Wynik: 0</div>
+    <div id="best" class="btn">Rekord: 0</div>
+  </div>
+  <div class="bottom-info">
+    Stuknij ekrany, aby unieść ptaszka. Unikaj lecących desek (🪵). Przyciskaj szybko, aby pozostać w górze.
+  </div>
+
+<script>
+// Prosta gra mobilna: ptak (emoji) unosi się przy stuknięciu, z desekami lecącymi ze ścian.
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let DPR = Math.max(window.devicePixelRatio || 1, 1);
+
+function resize(){
+  DPR = Math.max(window.devicePixelRatio || 1, 1);
+  canvas.width = Math.floor(innerWidth * DPR);
+  canvas.height = Math.floor(innerHeight * DPR);
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Game variables
+let bird = { x: innerWidth*0.28, y: innerHeight*0.5, vy: 0, size: Math.min(innerWidth, innerHeight) * 0.08 };
+let gravity = 0.55;
+let flapPower = -10.5;
+let obstacles = [];
+let lastSpawn = 0;
+let spawnInterval = 900; // ms
+let running = false;
+let score = 0;
+let best = Number(localStorage.getItem('emoji_bird_best') || 0);
+let lastTime = 0;
+let gameOver = false;
+const birdEmoji = '🐦';
+const plankEmoji = '🪵';
+
+function reset(){
+  bird.y = innerHeight*0.5;
+  bird.vy = 0;
+  obstacles = [];
+  lastSpawn = performance.now();
+  score = 0;
+  gameOver = false;
+  running = true;
+}
+
+function spawn(){
+  // Spawn a long thin plank from left or right
+  const fromLeft = Math.random() < 0.5;
+  const h = Math.max(24, innerHeight * (0.05 + Math.random()*0.08)); // plank thickness px
+  const length = Math.max(innerWidth*0.25, innerWidth*(0.4 + Math.random()*0.4));
+  const y = 40 + Math.random() * (innerHeight - 80 - h);
+  const speed = (innerWidth * (0.25 + Math.random()*0.45)) / 1000; // pixels per ms
+  obstacles.push({ x: fromLeft ? -length : innerWidth + length, y, w: length, h, vx: fromLeft ? speed : -speed, fromLeft });
+}
+
+function drawEmoji(text, x, y, size){
+  ctx.font = Math.round(size) + 'px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+
+function update(dt){
+  if(!running) return;
+  bird.vy += gravity;
+  bird.y += bird.vy;
+
+  // Keep bird within screen (but allow hitting ceilings/floor)
+  if(bird.y < bird.size/2) bird.y = bird.size/2, bird.vy = 0;
+
+  // Update obstacles
+  for(let i = obstacles.length-1; i>=0; i--){
+    const o = obstacles[i];
+    o.x += o.vx * dt;
+    // remove when fully outside the opposite side
+    if(o.vx > 0 && o.x - o.w > innerWidth + 200) obstacles.splice(i,1);
+    if(o.vx < 0 && o.x + o.w < -200) obstacles.splice(i,1);
+    // scoring: when plank passes the bird center (from right to left or left to right)
+    if(!o.scored){
+      if(o.vx < 0 && o.x + o.w/2 < bird.x){ score++; o.scored = true; updateScore(); }
+      if(o.vx > 0 && o.x + o.w/2 > bird.x && o.x - o.w/2 > bird.x){ /*avoid*/ }
+    }
+  }
+
+  // Collision detection: approximate bird as rectangle
+  const bx = bird.x;
+  const by = bird.y;
+  const bw = bird.size * 0.9;
+  const bh = bird.size * 0.9;
+  for(const o of obstacles){
+    // plank rectangle
+    const rx = o.x;
+    const ry = o.y;
+    const rw = o.w;
+    const rh = o.h;
+    // AABB collision
+    if(bx + bw/2 > rx && bx - bw/2 < rx + rw && by + bh/2 > ry && by - bh/2 < ry + rh){
+      // hit
+      endGame();
+    }
+  }
+
+  // Hit ground or ceiling as death
+  if(bird.y + bird.size/2 > innerHeight){ endGame(); }
+}
+
+function draw(){
+  // background
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+
+  // sky gradient
+  const g = ctx.createLinearGradient(0,0,0,innerHeight);
+  g.addColorStop(0,'#7ec0ff');
+  g.addColorStop(1,'#87e0ff');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,innerWidth,innerHeight);
+
+  // obstacles (deski)
+  for(const o of obstacles){
+    // draw long plank as repeating emoji across its width
+    const textSize = o.h * 1.1;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(o.x, o.y, o.w, o.h);
+    ctx.clip();
+    // compute number of emojis to draw
+    const count = Math.ceil(o.w / (textSize*0.6));
+    for(let i=0;i<count;i++){
+      const px = o.x + i * (o.w / count) + (o.w/count)/2;
+      const py = o.y + o.h/2;
+      drawEmoji(plankEmoji, px, py, textSize);
+    }
+    ctx.restore();
+    // subtle edge
+    ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+    ctx.strokeRect(o.x, o.y, o.w, o.h);
+  }
+
+  // draw bird
+  const rot = Math.max(-0.6, Math.min(0.6, bird.vy * 0.03));
+  ctx.save();
+  ctx.translate(bird.x, bird.y);
+  ctx.rotate(rot);
+  drawEmoji(birdEmoji, 0, 0, bird.size);
+  ctx.restore();
+}
+
+function loop(ts){
+  if(!lastTime) lastTime = ts;
+  const dt = ts - lastTime; // ms
+  lastTime = ts;
+
+  // spawn obstacles over time
+  if(ts - lastSpawn > spawnInterval){
+    spawn();
+    lastSpawn = ts;
+    // gradually speed up spawn a little
+    spawnInterval = Math.max(500, spawnInterval - 8);
+  }
+
+  update(dt);
+  draw();
+  if(running) requestAnimationFrame(loop);
+}
+
+function flap(){
+  if(gameOver){ reset(); return; }
+  bird.vy = flapPower;
+}
+
+function updateScore(){
+  document.getElementById('score').textContent = 'Wynik: ' + score;
+  if(score > best){ best = score; localStorage.setItem('emoji_bird_best', best); document.getElementById('best').textContent = 'Rekord: ' + best; }
+}
+
+function endGame(){
+  running = false;
+  gameOver = true;
+  // show game over overlay by simple alert-like text
+  setTimeout(()=>{
+    // flash red overlay
+    ctx.fillStyle = 'rgba(200,20,20,0.18)';
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.font = '28px system-ui, serif';
+    ctx.fillText('KONIEC — stuknij, aby zagrać ponownie', innerWidth/2, innerHeight/2);
+  },50);
+}
+
+// Input handlers
+function onPointer(){
+  if(!running && !gameOver){ reset(); requestAnimationFrame(loop); return; }
+  if(!running && gameOver){ reset(); requestAnimationFrame(loop); return; }
+  flap();
+}
+
+window.addEventListener('touchstart', function(e){ e.preventDefault(); onPointer(); }, {passive:false});
+window.addEventListener('mousedown', function(e){ onPointer(); });
+
+// Initial draw and boot screen
+ctx.fillStyle = '#7ec0ff';
+ctx.fillRect(0,0,innerWidth,innerHeight);
+ctx.fillStyle = '#fff';
+ctx.textAlign = 'center';
+ctx.font = '28px system-ui, serif';
+ctx.fillText('Stuknij ekran, aby wystartować', innerWidth/2, innerHeight/2 - 20);
+ctx.font = '20px system-ui, serif';
+ctx.fillText('Unikaj lecących desek (🪵).', innerWidth/2, innerHeight/2 + 10);
+
+// show best
+document.getElementById('best').textContent = 'Rekord: ' + best;
+
+// Auto start small loop to animate background until first start
+running = false;
+</script>
+</body>
+</html>

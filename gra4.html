@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Emoji Survival (mobil)</title>
+  <style>
+    html,body{height:100%;margin:0;background:#fff;color:#000;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    canvas{display:block;touch-action:none}
+    .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+    .box{background:rgba(255,255,255,0.9);backdrop-filter:blur(4px);padding:14px;border-radius:12px;max-width:90%;text-align:center;color:#000}
+    .hud{position:fixed;left:12px;top:12px;font-size:18px;color:#000}
+    .hud-right{position:fixed;right:12px;top:12px;font-size:18px;color:#000}
+    .small{font-size:12px;color:#333;margin-top:6px}
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hp">Życia: ❤️❤️❤️❤️❤️</div>
+  <div class="hud-right" id="timer">Czas: 0.0s</div>
+
+  <div class="overlay" id="startOverlay">
+    <div class="box">
+      <h2>jestem marek</h2>
+      <p>😭 Steruj markiem przeciągając palcem, aby się przesuwał. Unikaj pocisków!</p>
+      <p>🏹 strzela strzałami ➡️⬇️⬅️⬆️ w Twoją stronę.</p>
+      <p>🚁 pojawia się i wystrzeliwuje rakiety 🚀.</p>
+      <div class="small">Dotknij ekranu, aby rozpocząć</div>
+    </div>
+  </div>
+
+  <script>
+  const PLAYER_EMOJI = '😭';
+  const CANNON_EMOJI = '🛩️';
+  const TRACKING_CANNON_EMOJI = '🏹';
+  const PROJECTILE_CHAR = '🔸';
+  const ARROW_EMOJIS = ['➡️','⬇️','⬅️','⬆️'];
+  const HELI_EMOJI = '🚁';
+  const ROCKET_EMOJI = '🚀';
+
+  const START_LIVES = 5;
+  const CANVAS = document.getElementById('game');
+  const CTX = CANVAS.getContext('2d');
+  let width=0,height=0,DPR=Math.max(1,window.devicePixelRatio||1);
+
+  function resize(){
+    width=window.innerWidth;
+    height=window.innerHeight;
+    CANVAS.style.width=width+'px';
+    CANVAS.style.height=height+'px';
+    CANVAS.width=Math.floor(width*DPR);
+    CANVAS.height=Math.floor(height*DPR);
+    CTX.setTransform(DPR,0,0,DPR,0,0);
+  }
+  window.addEventListener('resize',resize);
+  resize();
+
+  let player={x:width/2,y:height/2,r:18,vx:0,vy:0,speed:240};
+  let projectiles=[];
+  let cannons=[];
+  let helicopters=[];
+  let lastTime=null;
+  let running=false;
+  let startTs=0;
+  let elapsed=0;
+  let lives=START_LIVES;
+  const hpEl=document.getElementById('hp');
+  const timerEl=document.getElementById('timer');
+  let lastHeliSpawn=0;
+
+  function spawnCannon(x,y,opts={}){
+    const c={x,y,angle:opts.angle||0,cooldown:opts.cooldown||3.5,lastShot:0,tracking:!!opts.tracking,emoji:opts.tracking?TRACKING_CANNON_EMOJI:CANNON_EMOJI,size:opts.size||22};
+    cannons.push(c);
+    return c;
+  }
+
+  function spawnProjectile(x,y,angle,opts={}){
+    const speed=opts.speed||120;
+    let emoji=PROJECTILE_CHAR;
+    if(opts.type==='arrow'){
+      const deg=angle*180/Math.PI;
+      let dir=0;
+      if(deg>-45&&deg<=45)dir=0;
+      else if(deg>45&&deg<=135)dir=1;
+      else if(deg<=-45&&deg>-135)dir=3;
+      else dir=2;
+      emoji=ARROW_EMOJIS[dir];
+    }
+    if(opts.type==='rocket'){
+      emoji=ROCKET_EMOJI;
+    }
+    projectiles.push({x,y,dx:Math.cos(angle)*speed,dy:Math.sin(angle)*speed,r:6,emoji,type:opts.type||'bullet',life:opts.life||0});
+  }
+
+  function spawnHelicopter(){
+    const x=Math.random()*(width-100)+50;
+    const y=Math.random()*(height-100)+50;
+    helicopters.push({x,y,emoji:HELI_EMOJI,lastShot:0});
+  }
+
+  function updateHUD(){
+    const hearts='❤️'.repeat(Math.max(0,lives));
+    hpEl.textContent='Życia: '+hearts.padEnd(START_LIVES,'🤍');
+    timerEl.textContent='Czas: '+(elapsed/1000).toFixed(1)+'s';
+  }
+
+  function startGame(){
+    document.getElementById('startOverlay').style.display='none';
+    running=true;
+    startTs=performance.now();
+    elapsed=0;lives=START_LIVES;
+    player.x=width/2;player.y=height/2;player.vx=0;player.vy=0;
+    cannons=[];projectiles=[];helicopters=[];lastHeliSpawn=0;
+    spawnCannon(40,40,{angle:0.6});
+    spawnCannon(width-40,40,{angle:2.5});
+    spawnCannon(40,height-40,{angle:-0.6});
+    spawnCannon(width-40,height-40,{angle:-2.5});
+    spawnCannon(width/2,40,{tracking:true});
+    lastTime=null;
+    requestAnimationFrame(loop);
+  }
+
+  let lastTouch=null;
+  function onTouchStart(e){lastTouch=e.touches?e.touches[0]:e;if(!running){startGame();}}
+  function onTouchMove(e){e.preventDefault();const t=e.touches?e.touches[0]:e;const dx=t.clientX-lastTouch.clientX;const dy=t.clientY-lastTouch.clientY;const mag=Math.hypot(dx,dy);if(mag>6){const nx=dx/mag,ny=dy/mag;const impulse=220;player.vx=nx*impulse;player.vy=ny*impulse;lastTouch=t;}}
+  function onTouchEnd(e){lastTouch=null;}
+  window.addEventListener('touchstart',onTouchStart,{passive:false});
+  window.addEventListener('touchmove',onTouchMove,{passive:false});
+  window.addEventListener('touchend',onTouchEnd,{passive:false});
+  window.addEventListener('mousedown',e=>{onTouchStart(e);},{passive:false});
+  window.addEventListener('mousemove',e=>{if(e.buttons)onTouchMove(e);},{passive:false});
+  window.addEventListener('mouseup',onTouchEnd,{passive:false});
+
+  function loop(ts){
+    if(!lastTime)lastTime=ts;
+    const dt=(ts-lastTime)/1000;
+    lastTime=ts;
+    if(!running)return;
+    elapsed=ts-startTs;
+
+    player.vx*=Math.pow(0.9,dt*60);
+    player.vy*=Math.pow(0.9,dt*60);
+    player.x=Math.max(player.r,Math.min(width-player.r,player.x+player.vx*dt));
+    player.y=Math.max(player.r,Math.min(height-player.r,player.y+player.vy*dt));
+
+    for(const c of cannons){
+      if(c.tracking){c.angle=Math.atan2(player.y-c.y,player.x-c.x);}
+      c.lastShot+=dt;
+      if(c.lastShot>=c.cooldown){
+        c.lastShot=0;
+        spawnProjectile(c.x+Math.cos(c.angle)*(c.size+6),c.y+Math.sin(c.angle)*(c.size+6),c.angle,{speed:c.tracking?150:100,type:c.tracking?'arrow':'bullet'});
+      }
+    }
+
+    for(const h of helicopters){
+      h.lastShot+=dt;
+      if(h.lastShot>=15){
+        h.lastShot=0;
+        const ang=Math.atan2(player.y-h.y,player.x-h.x);
+        spawnProjectile(h.x,h.y,ang,{speed:100,type:'rocket',life:3});
+      }
+    }
+
+    for(let i=projectiles.length-1;i>=0;i--){
+      const p=projectiles[i];
+      if(p.type==='rocket'&&p.life>0){
+        const ang=Math.atan2(player.y-p.y,player.x-p.x);
+        p.dx=Math.cos(ang)*120;
+        p.dy=Math.sin(ang)*120;
+        p.life-=dt;
+      }
+      p.x+=p.dx*dt;
+      p.y+=p.dy*dt;
+      if(Math.hypot(p.x-player.x,p.y-player.y)<p.r+player.r*0.6){
+        projectiles.splice(i,1);
+        lives--;if(lives<=0)return gameOver();
+      }
+      if(p.x<-40||p.x>width+40||p.y<-40||p.y>height+40)projectiles.splice(i,1);
+    }
+
+    if(Math.random()<0.004){
+      if(Math.random()<0.5){
+        spawnCannon(Math.random()*width,Math.random()*height,{tracking:true});
+      } else {
+        spawnCannon(Math.random()*width,Math.random()*height,{angle:0});
+      }
+    }
+
+    // spawn helikoptera co 30 sekund
+    if(elapsed/1000-lastHeliSpawn>=30){
+      lastHeliSpawn=elapsed/1000;
+      spawnHelicopter();
+    }
+
+    CTX.clearRect(0,0,width,height);
+    CTX.textAlign='center';CTX.textBaseline='middle';
+
+    for(const c of cannons){
+      CTX.save();
+      CTX.translate(c.x,c.y);
+      CTX.rotate(c.angle);
+      CTX.font=c.size+'px serif';
+      CTX.fillText(c.emoji,0,0);
+      CTX.restore();
+    }
+
+    for(const h of helicopters){
+      CTX.font='26px serif';
+      CTX.fillText(h.emoji,h.x,h.y);
+    }
+
+    for(const p of projectiles){
+      CTX.font='16px serif';
+      CTX.fillText(p.emoji,p.x,p.y);
+    }
+
+    CTX.font=(player.r*2)+'px serif';
+    CTX.fillText(PLAYER_EMOJI,player.x,player.y);
+
+    updateHUD();
+    requestAnimationFrame(loop);
+  }
+
+  function gameOver(){
+    running=false;
+    document.getElementById('startOverlay').style.display='flex';
+    document.querySelector('.box').innerHTML=`<h2>Koniec gry</h2><p>Przeżyłeś: ${(elapsed/1000).toFixed(1)} s</p><div class=small>Dotknij, aby spróbować ponownie</div>`;
+  }
+
+  </script>
+</body>
+</html>

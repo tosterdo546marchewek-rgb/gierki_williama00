@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Subway Runner z Restartem i Sklepem</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #1e1e1e;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    user-select: none;
+    touch-action: manipulation;
+    color: white;
+    text-align: center;
+    padding: 10px;
+  }
+  #info {
+    font-size: 18px;
+    margin-bottom: 5px;
+  }
+  #game {
+    position: relative;
+    width: 300px;
+    height: 500px;
+    margin: 0 auto 10px;
+    background: linear-gradient(to bottom, #3e3e3e, #111);
+    border: 4px solid #fff;
+    border-radius: 15px;
+    overflow: hidden;
+  }
+  #player {
+    position: absolute;
+    bottom: 20px;
+    width: 60px;
+    height: 60px;
+    font-size: 36px;
+    line-height: 60px;
+    text-align: center;
+    transition: left 0.15s ease, bottom 0.25s ease;
+    left: 120px;
+    z-index: 10;
+    color: white;
+  }
+  .obstacle, .coin, .power {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    font-size: 34px;
+    line-height: 60px;
+    text-align: center;
+  }
+  .obstacle {
+    color: #ff3c3c;
+    animation: shake 0.4s infinite;
+  }
+  .coin {
+    color: gold;
+  }
+  .power {
+    color: cyan;
+  }
+  #game-over {
+    position: absolute;
+    top: 40%;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    font-size: 24px;
+    color: white;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 20px;
+    display: none;
+    z-index: 100;
+  }
+  @keyframes shake {
+    0% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    50% { transform: translateX(2px); }
+    75% { transform: translateX(-1px); }
+    100% { transform: translateX(0); }
+  }
+  #shopBtn, #restartBtn {
+    background: #222;
+    border: 2px solid #fff;
+    border-radius: 8px;
+    padding: 8px 15px;
+    cursor: pointer;
+    font-size: 16px;
+    margin-bottom: 10px;
+    color: white;
+    margin-right: 10px;
+  }
+  #shop {
+    max-width: 320px;
+    margin: 0 auto 15px;
+    background: #333;
+    border-radius: 12px;
+    padding: 10px;
+    display: none;
+    text-align: left;
+    color: white;
+  }
+  .skinItem {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #555;
+    cursor: pointer;
+    font-size: 20px;
+  }
+  .skinItem:hover {
+    background: #444;
+  }
+  .skinEmoji {
+    font-size: 28px;
+    width: 40px;
+  }
+  .skinName {
+    flex-grow: 1;
+    padding-left: 10px;
+  }
+  .skinPrice {
+    width: 70px;
+    text-align: right;
+    color: gold;
+  }
+  .owned {
+    color: #0f0;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<div id="info">
+  Punkty: <span id="score">0</span> |
+  Monety: <span id="coins">0</span> |
+  Kolizje: <span id="hits">0</span>
+</div>
+
+<button id="shopBtn">🛒 Sklep ze skinami</button>
+<button id="restartBtn">🔄 Restart</button>
+
+<div id="shop">
+  <div class="skinItem" data-id="0">
+    <span class="skinEmoji">🏃‍♂️</span>
+    <span class="skinName">Domyślny</span>
+    <span class="skinPrice">-</span>
+  </div>
+  <div class="skinItem" data-id="1">
+    <span class="skinEmoji">🤖</span>
+    <span class="skinName">Robot</span>
+    <span class="skinPrice">50 💰</span>
+  </div>
+  <div class="skinItem" data-id="2">
+    <span class="skinEmoji">👽</span>
+    <span class="skinName">Kosmita</span>
+    <span class="skinPrice">100 💰</span>
+  </div>
+</div>
+
+<div id="game">
+  <div id="player">🏃‍♂️</div>
+  <div id="game-over">💀 Koniec gry!<br>Kliknij Restart, aby zagrać ponownie.</div>
+</div>
+
+<script>
+  const game = document.getElementById("game");
+  const player = document.getElementById("player");
+  const scoreDisplay = document.getElementById("score");
+  const coinDisplay = document.getElementById("coins");
+  const hitDisplay = document.getElementById("hits");
+  const gameOverEl = document.getElementById("game-over");
+  const shopBtn = document.getElementById("shopBtn");
+  const shop = document.getElementById("shop");
+  const skinItems = document.querySelectorAll(".skinItem");
+  const restartBtn = document.getElementById("restartBtn");
+
+  const lanes = [30, 120, 210];
+  let currentLane = 1;
+  let isJumping = false;
+  let score = 0;
+  let coins = 0;
+  let hits = 0;
+  let gameRunning = true;
+  let isInvincible = false;
+  let powerUpTimeout;
+
+  const skins = [
+    { emoji: "🏃‍♂️", name: "Domyślny", price: 0 },
+    { emoji: "🤖", name: "Robot", price: 50 },
+    { emoji: "👽", name: "Kosmita", price: 100 },
+  ];
+  let ownedSkins = [0];
+  let currentSkinId = 0;
+
+  function movePlayer() {
+    player.style.left = lanes[currentLane] + "px";
+  }
+
+  function jump() {
+    if (isJumping || !gameRunning) return;
+    isJumping = true;
+    player.innerHTML = skins[currentSkinId].emoji === "🏃‍♂️" ? "🤸" : skins[currentSkinId].emoji;
+    player.style.bottom = "100px";
+    setTimeout(() => {
+      player.style.bottom = "20px";
+      setTimeout(() => {
+        isJumping = false;
+        player.innerHTML = skins[currentSkinId].emoji;
+      }, 200);
+    }, 400);
+  }
+
+  function activatePowerUp() {
+    isInvincible = true;
+    player.style.color = "cyan";
+    clearTimeout(powerUpTimeout);
+    powerUpTimeout = setTimeout(() => {
+      isInvincible = false;
+      player.style.color = "white";
+    }, 5000);
+  }
+
+  function updateUI() {
+    scoreDisplay.textContent = score;
+    coinDisplay.textContent = coins;
+    hitDisplay.textContent = hits;
+  }
+
+  function endGame() {
+    gameRunning = false;
+    gameOverEl.style.display = "block";
+  }
+
+  function resetGame() {
+    document.querySelectorAll(".obstacle, .coin, .power").forEach(e => e.remove());
+    currentLane = 1;
+    isJumping = false;
+    score = 0;
+    coins = 0;
+    hits = 0;
+    gameRunning = true;
+    isInvincible = false;
+    clearTimeout(powerUpTimeout);
+    player.style.color = "white";
+    player.innerHTML = skins[currentSkinId].emoji;
+    player.style.bottom = "20px";
+    movePlayer();
+    updateUI();
+    gameOverEl.style.display = "none";
+    spawnInterval = initialSpawnInterval;
+  }
+
+  // Dotyk
+  let touchStartX = null, touchStartY = null;
+  game.addEventListener("touchstart", e => {
+    touchStartX = e.changedTouches[0].clientX;
+    touchStartY = e.changedTouches[0].clientY;
+  });
+  game.addEventListener("touchend", e => {
+    if (!touchStartX || !touchStartY) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    if (!gameRunning) return;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (dx > 30 && currentLane < 2) currentLane++;
+      else if (dx < -30 && currentLane > 0) currentLane--;
+      movePlayer();
+    } else if (dy < -30) {
+      jump();
+    }
+    touchStartX = null;
+    touchStartY = null;
+  });
+
+  // Klawiatura
+  document.addEventListener("keydown", e => {
+    if (!gameRunning) return;
+    if (e.key === "ArrowLeft" && currentLane > 0) currentLane--;
+    if (e.key === "ArrowRight" && currentLane < 2) currentLane++;
+    if (e.key === "ArrowUp") jump();
+    movePlayer();
+  });
+
+  let initialSpawnInterval = 1000;
+  let spawnInterval = initialSpawnInterval;
+  let spawnTimer;
+  let fallSpeedBase = 3;
+
+  function spawnElement(type) {
+    if (!gameRunning) return;
+    const el = document.createElement("div");
+    el.classList.add(type);
+    el.innerHTML = type === "obstacle" ? "🚧" :
+                   type === "coin" ? "💰" :
+                   type === "power" ? "🎁" : "";
+    const lane = Math.floor(Math.random() * 3);
+    el.style.left = lanes[lane] + "px";
+    el.style.top = "-60px";
+    game.appendChild(el);
+    let top = -60;
+    const fallSpeed = Math.min(fallSpeedBase + score * 0.02, 12);
+    const fall = setInterval(() => {
+      if (!gameRunning) {
+        clearInterval(fall);
+        el.remove();
+        return;
+      }
+      top += fallSpeed;
+      el.style.top = top + "px";
+      const playerTop = isJumping ? 100 : 20;
+      if (
+        top >= 420 - playerTop &&
+        top <= 480 - playerTop &&
+        lane === currentLane
+      ) {
+        if (type === "obstacle") {
+          if (isInvincible) {
+            hits++;
+            updateUI();
+          } else if (!isJumping) {
+            endGame();
+          }
+        } else if (type === "coin") {
+          coins++;
+          score += 5;
+          updateUI();
+        } else if (type === "power") {
+          activatePowerUp();
+          score += 10;
+          updateUI();
+        }
+        el.remove();
+        clearInterval(fall);
+      }
+      if (top > 500) {
+        if (type === "coin") {
+          score += 1;
+          updateUI();
+        }
+        el.remove();
+        clearInterval(fall);
+      }
+    }, 20);
+  }
+
+  function spawnLoop() {
+    if (!gameRunning) return;
+    const rand = Math.random();
+    const type = rand < 0.6 ? "obstacle" : rand < 0.9 ? "coin" : "power";
+    spawnElement(type);
+
+    if (score > 0 && score % 10 === 0) {
+      spawnInterval = Math.max(300, initialSpawnInterval - Math.floor(score / 10) * 50);
+      clearInterval(spawnTimer);
+      spawnTimer = setInterval(spawnLoop, spawnInterval);
+    }
+  }
+
+  shopBtn.onclick = () => {
+    shop.style.display = shop.style.display === "block" ? "none" : "block";
+  };
+
+  skinItems.forEach(item => {
+    item.onclick = () => {
+      if (!gameRunning) return;
+      const id = +item.dataset.id;
+      if (ownedSkins.includes(id)) {
+        currentSkinId = id;
+        player.innerHTML = skins[currentSkinId].emoji;
+      } else {
+        const price = skins[id].price;
+        if (coins >= price) {
+          coins -= price;
+          ownedSkins.push(id);
+          currentSkinId = id;
+          player.innerHTML = skins[currentSkinId].emoji;
+          updateUI();
+          updateShop();
+          alert(`Kupiono skina: ${skins[id].name}!`);
+        } else {
+          alert("Brak wystarczającej ilości monet!");
+        }
+      }
+    };
+  });
+
+  function updateShop() {
+    skinItems.forEach(item => {
+      const id = +item.dataset.id;
+      if (ownedSkins.includes(id)) {
+        item.classList.add("owned");
+        item.querySelector(".skinPrice").textContent = "Posiadany";
+      } else {
+        item.classList.remove("owned");
+        item.querySelector(".skinPrice").textContent = skins[id].price + " 💰";
+      }
+    });
+  }
+
+  restartBtn.onclick = () => {
+    resetGame();
+    clearInterval(spawnTimer);
+    spawnTimer = setInterval(spawnLoop, spawnInterval);
+  };
+
+  // START
+  updateShop();
+  player.innerHTML = skins[currentSkinId].emoji;
+  movePlayer();
+  updateUI();
+  spawnTimer = setInterval(spawnLoop, spawnInterval);
+</script>
+
+</body>
+</html>
